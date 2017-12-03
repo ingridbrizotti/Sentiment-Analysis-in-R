@@ -1,0 +1,278 @@
+
+---
+title: "Sentimental analysis of top 100 Billboard charts"
+output: pdf_document
+author: Ingrid Brizotti
+---
+
+\hspace*{2cm}
+
+Accordingly to Wikipedia, the Billboard Hot 100 is the music industry standard record chart in the United States for singles, published weekly by Billboard magazine. Chart rankings are based on sales, radio play, and online streaming
+
+The goal is to analyze 30 years of lyrics using top 100 from Billboard. 
+I used web scraping code from Kaylin Walker, and I add one more year 2016. 
+The dataset is available in my folder and contains data from 1980 to 2016.
+
+For the sentimenal analysis part I used the amazing package tidytext created by Julia Silge and David Robinson. Also Julia teaches a great course about this in DataCamp, you should definitely check it out ;)
+
+\hspace*{2cm}
+
+Packages:
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(SnowballC)
+library(tm)  
+library(stringr)
+library(ggplot2)
+library(RColorBrewer)
+library(wordcloud)
+library(tidytext)
+library(tidyr)
+library(dplyr)
+```
+
+\hspace*{2cm}
+
+Load the data and check the structure
+```{r}
+load("~/Documents/GitHub/sentimental analysis billboard/billboard_1980_2016.Rda")
+head(billboard_1980_2016)
+```
+
+\hspace*{2cm}
+
+Let's create a word cloud for the name of the songs, and the steps are: 
+
+1) create a corpus
+
+2) convert the corpus to a plain text document
+
+3) remove all punctuation and stopwords (example: I, me, my, and, etc)
+
+4) stemming (example: learning -> learn, walked -> walk...)
+
+5) plot the world cloud
+
+\hspace*{1cm}
+
+```{r}
+bl <- billboard_1980_2016
+song_corpus <- Corpus(VectorSource(bl$Song))
+song_corpus <- tm_map(song_corpus, PlainTextDocument)
+song_corpus <- tm_map(song_corpus, removePunctuation)
+song_corpus <- tm_map(song_corpus, removeWords, stopwords('english'))
+song_corpus <- tm_map(song_corpus, stemDocument)
+song_corpus <- Corpus(VectorSource(song_corpus))
+
+set.seed(3435)
+wordcloud(words = song_corpus,max.words=100, 
+          random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+\hspace*{2cm}
+
+On data preparation, let's transform some variables to numeric, and transform the Lyrics column to a word column (example: unnest_tokens(name_output_column,input_column))
+```{r}
+bl$Rank <- as.numeric(bl$Rank)
+bl$Year <- as.numeric(bl$Year)
+
+tidy_lyrics <- bl %>% unnest_tokens(word,Lyrics)
+```
+
+\hspace*{2cm}
+
+Check the frequency of words
+
+```{r}
+tidy_lyrics %>% count(word,sort=TRUE)
+```
+
+\hspace*{2cm}
+
+Choose top 200 words to do a word cloud
+```{r}
+top200 <- tidy_lyrics %>% count(word,sort=TRUE)
+top200 <- top200[c(1:200),]
+wordcloud(words = top200$word, freq=top200$n,  
+          random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+\hspace*{2cm}
+
+Calculate total words per song and plot
+
+```{r}
+total <- tidy_lyrics %>% 
+         count(Song) %>% 
+         rename(total_words = n)
+
+boxplot(total$total_words)
+summary(total$total_words)
+```
+On average a song has 415 words
+
+\hspace*{2cm}
+
+Combine total with tidy lyrics
+```{r}
+lyric_count <- tidy_lyrics %>% left_join(total, by="Song")
+```
+
+\hspace*{2cm}
+
+Now let's check if the number of words per lyric increased during these 30 years
+
+```{r}
+tot_year <- tidy_lyrics %>% count(Year) %>% 
+  rename(total_words = n)
+# Since 2016 has many missing in the lyrics field, let's exclude this year
+tot_year <- tot_year[1:36,]
+plot(tot_year$Year, tot_year$total_words, 
+     xlab="Year", ylab="Number of words", main="Words distribution per year")
+```
+
+The number of words increased since 1980
+
+\hspace*{2cm}
+
+**Sentimental Analysis**
+
+Implement sentimental analysis using NRC lexicon (has 10 categories of sentiment: anger, anticipation,
+disgust, fear, joy, negative, positive, sadness, surprise and trust)
+More details check http://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+
+\hspace*{1cm}
+```{r}
+lyric_sentiment <- lyric_count %>% inner_join(get_sentiments('nrc'))
+```
+
+\hspace*{2cm}
+
+take a look at the lyric_sentiment and you'll see most of words have more than one sentiment
+```{r}
+head(lyric_sentiment)
+```
+
+\hspace*{2cm}
+
+Find how many sentiment each song has
+
+```{r}
+lyric_sentiment %>% count(Song, sentiment, sort=TRUE)
+```
+
+\hspace*{2cm}
+
+What songs have the highest proportion of joy words?
+
+```{r}
+lyric_sentiment %>% count(Song, sentiment, total_words) %>%     #count using three arguments
+                    ungroup() %>%
+                    mutate(percent = n/total_words) %>%         # make a percent column
+                    filter(sentiment=="positive") %>%
+                    arrange(desc(percent))
+
+```
+
+\hspace*{2cm}
+
+And the proportion for sad words
+
+```{r}
+lyric_sentiment %>% count(Song, sentiment, total_words) %>%    
+                    ungroup() %>%
+                    mutate(percent = n/total_words) %>%        
+                    filter(sentiment=="sadness") %>%
+                    arrange(desc(percent))
+
+```
+
+\hspace*{2cm}
+
+
+Let's check if the Billboard rank is related to sentiment
+
+```{r}
+lyric_sentiment %>% filter(sentiment=="positive") %>%
+                    count(Song, Rank, total_words) %>%    
+                    ungroup() %>%
+                    mutate(percent = n/total_words,
+                           rank = 10 * floor(Rank/10))%>%         
+                    ggplot(aes(as.factor(rank), percent)) +
+                    geom_boxplot()
+```
+
+For positive sentiments the rank doesn't show any trend
+
+\hspace*{2cm}
+
+Are songs on the Billboard chart changing in their use of negative or positive words since 1980?
+
+```{r}
+# For positive sentiments
+ lyric_sentiment %>% filter(sentiment=="positive") %>%
+                    count(Song, Year, total_words) %>%    
+                    ungroup() %>%
+                    mutate(percent = n/total_words) %>%         
+                    ggplot(aes(as.factor(Year), percent)) +
+                    geom_boxplot()
+                  
+# For negative sentiments
+ lyric_sentiment %>% filter(sentiment=="negative") %>%
+                     count(Song, Year, total_words) %>%    
+                     ungroup() %>%
+                     mutate(percent = n/total_words) %>%         
+                     ggplot(aes(as.factor(Year), percent)) +
+                     geom_boxplot()
+```
+
+\hspace*{2cm}
+
+Let's try to model this sentiment
+
+```{r}
+ negative_data <- lyric_sentiment %>% filter(sentiment=="negative") %>%
+                                         count(Song, Year, total_words) %>%    
+                                         ungroup() %>%
+                                         mutate(percent = n/total_words)       
+
+negative_model <- lm(percent ~ Year, data=negative_data) 
+summary(negative_model)
+```
+The p-value is 0.79 > 0.05 so we can say Year for negative sentiment doesn't play a important role 
+
+\hspace*{2cm}
+
+Let's do the same for positive
+
+```{r}
+positive_data <- lyric_sentiment %>% filter(sentiment=="positive") %>%
+                                      count(Song, Year, total_words) %>%    
+                                      ungroup() %>%
+                                      mutate(percent = n/total_words)       
+
+positive_model <- lm(percent ~ Year, data=positive_data) 
+summary(positive_model)
+```
+
+In this case p-value is significant, and Year is a important variable
+
+\hspace*{2cm}
+
+Let's add sentiment as variable
+
+```{r}
+data_mod <- lyric_sentiment %>% count(Song, Year, sentiment, total_words) %>%    
+                                      ungroup() %>%
+                                      mutate(percent = n/total_words)       
+
+data_model <- lm(percent ~ Year + sentiment, data=data_mod) 
+summary(data_model)
+```
+
+
+Fear is not significant variable for the Billboard rank
+
+
